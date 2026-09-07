@@ -4,12 +4,24 @@ Run:
     /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 server.py
     # or: uvicorn server:app --port 8000
 """
+import shutil
+import sys
 import time
 import urllib.parse
-from fastapi import FastAPI
+import uuid
+from pathlib import Path
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from bs4 import BeautifulSoup
+
+# repo-root imports (face_detection.py, social_search.py live in repo root)
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from face_detection import process_face_scan
+from social_search import CATEGORY_ORDER, process_matches
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -20,6 +32,55 @@ class SearchRequest(BaseModel):
     image_url: str
     engine: str = "both"  # google | yandex | both
     amount: int = 20
+
+
+class FaceSearchRequest(BaseModel):
+    image_url: str
+    engine: str = "both"  # google | yandex | both
+    amount: int = 20
+
+
+def _crop_dataurl(crop_path: str | None) -> str | None:
+    """Read face crop jpg and return data: URL so frontend can show it."""
+    import base64
+    if not crop_path:
+        return None
+    try:
+        raw = Path(crop_path).read_bytes()
+        if len(raw) > 800_000:  # keep API payloads small
+            return None
+        return "data:image/jpeg;base64," + base64.b64encode(raw).decode()
+    except Exception:
+        return None
+
+
+def _run_face_pipeline(source: str, engine: str, amount: int) -> dict:
+    """Shared Step 1+2: face scan -> reverse-image search -> social filter+rerank."""
+    face = process_face_scan(source, out_dir=str(REPO_ROOT / "data" / "faces"))
+    # engines need a public URL; uploads pass their local path for face step
+    # but search with the original URL when available
+    search_url = face.get("source") if face.get("source", "").startswith("http") \
+        else face.get("image_path")
+    y_res, g_res = None, None
+    # local file without public URL: skip live search, return face only
+    # (caller can still anchor manually; genuine search needs a URL)
+    if isinstance(search_url, str) and search_url.startswith("http"):
+        if engine in ("yandex", "both"):
+            y_res = search_yandex(search_url, amount)
+        if engine in ("google", "both"):
+            g_res = search_google(search_url, amount)
+    matched = process_matches(y_res, g_res, face.get("query_encoding"))
+    return {
+        "face": {k: v for k, v in face.items() if k != "query_encoding"},
+        "face_phash": (face.get("query_encoding") or {}).get("phash"),
+        "face_crop_dataurl": _crop_dataurl(face.get("face_crop_path")),
+        "social_matches": matched["social_matches"],
+        "best_match": matched["best_match"],
+        "grouped": matched["grouped"],
+        "category_order": CATEGORY_ORDER,
+        "yandex": y_res,
+        "google": g_res,
+    }
 
 
 def make_driver():
@@ -148,6 +209,66 @@ def _lens_tab_url(driver, tab_name):
     return None
 
 
+def _unwrap_google_url(href: str | None) -> str | None:
+    """Unwrap Google redirect links to the real destination URL.
+
+    Handles two cases:
+    1. Simple query-param redirects: /url?q=<real>, ?url=<real_http_url>
+    2. Encrypted redirects: /goto?url=CAES... (encoded blob) — resolved
+       by following the HTTP redirect chain.
+    """
+    if not href or not isinstance(href, str):
+        return href
+    try:
+        q = urllib.parse.urlparse(href)
+        qs = urllib.parse.parse_qs(q.query)
+        # Case 1: plain-text URL in a query param
+        for key in ("q", "url", "u", "redirect", "target"):
+            vals = qs.get(key)
+            if vals and isinstance(vals[0], str) and vals[0].startswith("http"):
+                return vals[0]
+        # Case 2: encrypted Google redirect (/goto, /url with encoded blob)
+        # The url param exists but isn't a plain http link — follow the redirect
+        if q.hostname and "google" in q.hostname and q.path in ("/goto", "/url", "/away"):
+            return _follow_redirect(href) or href
+    except Exception:
+        pass
+    return href
+
+
+def _follow_redirect(url: str, timeout: int = 10) -> str | None:
+    """Follow HTTP redirect chain and return the final destination URL.
+
+    Google Lens' encrypted ``/goto?url=CAES...`` links are not regular HTTP
+    redirects: a HEAD request gets a 200 response, while the GET response
+    contains a small page whose ``here`` link is the real destination. Use a
+    GET so both ordinary redirects and that page form are handled.
+    """
+    import requests as _req
+    try:
+        r = _req.get(url, allow_redirects=True, timeout=timeout, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/152.0.0.0 Safari/537.36"
+        })
+        final = r.url
+        # Only return if we actually ended up somewhere different
+        if final and final != url and not ("google.com" in final and "/sorry/" in final):
+            return final
+        # Some Google /goto responses use an HTML handoff instead of a 3xx.
+        # Select only an absolute, non-Google destination so navigation and
+        # result metadata use the actual matching page rather than Google.
+        for link in BeautifulSoup(r.text, "html.parser").find_all("a", href=True):
+            destination = link["href"]
+            parsed = urllib.parse.urlparse(destination)
+            if (parsed.scheme in ("http", "https") and parsed.hostname and
+                    not parsed.hostname.lower().endswith("google.com")):
+                return destination
+    except Exception:
+        pass
+    return None
+
+
 def search_google(image_url, amount=20):
     """Returns {matching_pages: [...], similar_images: [...]}."""
     driver = make_driver()
@@ -182,6 +303,7 @@ def search_google(image_url, amount=20):
                 href = a.get("href") if a else None
                 if href and href.startswith("/"):
                     href = "https://www.google.com" + href
+                href = _unwrap_google_url(href)
                 if not href or href in seen:
                     continue
                 seen.add(href)
@@ -210,6 +332,7 @@ def search_google(image_url, amount=20):
                 href = a["href"]
                 if href.startswith("/"):
                     href = "https://www.google.com" + href
+                href = _unwrap_google_url(href)
                 img = a.find("img")
                 similar.append({
                     "rank": len(similar), "url": href,
@@ -248,6 +371,35 @@ def search(req: SearchRequest):
     if req.engine in ("google", "both"):
         out["google"] = search_google(req.image_url, req.amount)
     return out
+
+
+@app.post("/api/face/search")
+def face_search(req: FaceSearchRequest):
+    """Step 1+2 via image URL: face scan -> live search -> social best match."""
+    try:
+        return _run_face_pipeline(req.image_url, req.engine, req.amount)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/face/upload-search")
+async def face_upload_search(file: UploadFile = File(...),
+                             engine: str = "both", amount: int = 20):
+    """Step 1+2 via file upload: saves to data/uploads, runs face scan.
+
+    Note: engines need a public URL, so live search runs only when the
+    upload is accompanied by a reachable URL. Face detect/encode always runs.
+    Use /api/face/search with a public URL for the genuine end-to-end search.
+    """
+    updir = REPO_ROOT / "data" / "uploads"
+    updir.mkdir(parents=True, exist_ok=True)
+    dest = updir / f"{uuid.uuid4().hex}_{Path(file.filename or 'upload.jpg').name}"
+    with dest.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+    try:
+        return _run_face_pipeline(str(dest), engine, amount)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 if __name__ == "__main__":
