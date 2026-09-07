@@ -2,11 +2,12 @@
 
 Run:
     /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 server.py
-    # or: uvicorn server:app --port 8000
+    # or: uvicorn server:app --port 8011
 """
 import shutil
 import sys
 import time
+import os
 import urllib.parse
 import uuid
 from pathlib import Path
@@ -405,4 +406,4 @@ async def face_upload_search(file: UploadFile = File(...),
 if __name__ == "__main__":
     import uvicorn
     # run from repo root so ./chromedriver resolves
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("PORT", "8011")))

@@ -1,186 +1,27 @@
 import { useMemo, useState } from 'react'
 import './App.css'
 
-const API = 'http://127.0.0.1:8000'
+const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8011'
+const RULES = [{ name: 'Instagram', domains: ['instagram.com'] }, { name: 'Facebook', domains: ['facebook.com', 'fb.com'] }, { name: 'X / Twitter', domains: ['x.com', 'twitter.com'] }, { name: 'YouTube', domains: ['youtube.com', 'youtu.be'] }, { name: 'TikTok', domains: ['tiktok.com'] }, { name: 'LinkedIn', domains: ['linkedin.com'] }, { name: 'Pinterest', domains: ['pinterest.com', 'pin.it'] }, { name: 'Reddit', domains: ['reddit.com'] }]
+const Arrow = () => <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19 19 5M9 5h10v10" /></svg>
+const domain = (url) => { try { return new URL(url).hostname.replace(/^www\./, '') } catch { return 'website' } }
+const platform = (url) => RULES.find(({ domains }) => domains.some((item) => url?.toLowerCase().includes(item)))?.name
 
-const PLATFORM_RULES = [
-  { name: 'Instagram', domains: ['instagram.com'] },
-  { name: 'Facebook', domains: ['facebook.com', 'fb.com', 'fb.watch'] },
-  { name: 'X / Twitter', domains: ['x.com', 'twitter.com', 't.co'] },
-  { name: 'YouTube', domains: ['youtube.com', 'youtu.be'] },
-  { name: 'TikTok', domains: ['tiktok.com'] },
-  { name: 'LinkedIn', domains: ['linkedin.com'] },
-  { name: 'Pinterest', domains: ['pinterest.com', 'pin.it'] },
-  { name: 'Reddit', domains: ['reddit.com'] },
-  { name: 'Threads', domains: ['threads.net'] },
-  { name: 'Snapchat', domains: ['snapchat.com'] },
-  { name: 'VK', domains: ['vk.com'] },
-  { name: 'Weibo', domains: ['weibo.com'] },
-  { name: 'Tumblr', domains: ['tumblr.com'] },
-  { name: 'Quora', domains: ['quora.com'] },
-  { name: 'Medium', domains: ['medium.com'] },
-  { name: 'Telegram', domains: ['t.me', 'telegram.org'] },
-  { name: 'WhatsApp', domains: ['whatsapp.com'] },
-  { name: 'Discord', domains: ['discord.com', 'discord.gg'] },
-  { name: 'Twitch', domains: ['twitch.tv'] },
-  { name: 'Spotify', domains: ['spotify.com'] },
-]
-
-const PLATFORM_COLORS = {
-  Instagram: '#df3f78', Facebook: '#1877f2', 'X / Twitter': '#101010',
-  YouTube: '#f00000', TikTok: '#101010', LinkedIn: '#0a66c2',
-  Pinterest: '#e60023', Reddit: '#ff4500', Threads: '#101010',
-  Snapchat: '#d7bd00', VK: '#4c75a3', Weibo: '#e6162d', Tumblr: '#35465c',
-  Quora: '#b92b27', Medium: '#101010', Telegram: '#0088cc',
-  WhatsApp: '#25d366', Discord: '#5865f2', Twitch: '#9146ff', Spotify: '#1db954',
-}
-
-function detectPlatform(url) {
-  if (!url) return null
-  const value = url.toLowerCase()
-  return PLATFORM_RULES.find((rule) => rule.domains.some((domain) => (
-    value.includes(`://${domain}`) || value.includes(`://${'www.' + domain}`)
-  )))?.name || null
-}
-
-function ArrowIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19 19 5M9 5h10v10" /></svg>
-}
-
-function SearchResult({ result }) {
-  const platform = detectPlatform(result.url)
-  const label = platform || (() => {
-    try { return new URL(result.url).hostname.replace(/^www\./, '') } catch { return 'Source' }
-  })()
-
-  return (
-    <article className="result-card">
-      <div className="result-image">
-        {result.thumbnail_url ? (
-          <img src={result.thumbnail_url} alt={result.title || `${label} result`} loading="lazy" />
-        ) : <div className="image-placeholder">No preview</div>}
-      </div>
-      <div className="result-meta">
-        <div>
-          <p className="result-source" style={{ '--tag-color': PLATFORM_COLORS[platform] || '#111' }}>{label}</p>
-          {result.title && <p className="result-title">{result.title}</p>}
-        </div>
-        <a className="open-link" href={result.url} target="_blank" rel="noreferrer" aria-label={`Open ${label} result`}>
-          <ArrowIcon />
-        </a>
-      </div>
-    </article>
-  )
-}
+function HeroArt() { return <div className="hero-art" aria-hidden="true"><i className="orbit" /><i className="sphere" /><i className="card card-one"><b /><b /><b /></i><i className="card card-two"><b /></i><i className="ring" /><i className="dot dot-one" /><i className="dot dot-two" /></div> }
+function Result({ result, onReview }) { const source = platform(result.url) || result.domain || domain(result.url); return <article className="result-card"><div className="result-mark">{source[0]}</div><div className="result-copy"><p>{source}</p><h3>{result.title || 'Matching page'}</h3><span>{domain(result.url)}</span></div><button className="review-button" onClick={() => onReview(result)}>Review <Arrow /></button></article> }
 
 export default function App() {
-  const [imageUrl, setImageUrl] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
-  const [results, setResults] = useState(null)
-
-  const previewUrl = imageUrl.trim()
-  const hasValidInput = /^https?:\/\//i.test(previewUrl)
-  const allResults = useMemo(() => {
-    if (!results) return []
-    const sources = [
-      results.yandex?.info_pages, results.yandex?.similar_images,
-      results.google?.matching_pages, results.google?.similar_images,
-    ]
-    const seen = new Set()
-    return sources.flat().filter((item) => {
-      if (!item?.url || seen.has(item.url)) return false
-      seen.add(item.url)
-      return true
-    })
-  }, [results])
-
-  async function search(event) {
-    event.preventDefault()
-    if (!hasValidInput) return
-    setLoading(true)
-    setError(null)
-    setResults(null)
-    try {
-      const response = await fetch(`${API}/api/search`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_url: previewUrl, engine: 'both', amount: 30 }),
-      })
-      if (!response.ok) throw new Error(`Backend ${response.status}`)
-      setResults(await response.json())
-    } catch (err) {
-      setError(`Search failed: ${err.message}. Is the backend running on ${API}?`)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  function updateUrl(event) {
-    setImageUrl(event.target.value)
-    setResults(null)
-    setError(null)
-  }
-
-  function startOver() {
-    setResults(null)
-    setError(null)
-  }
-
-  return (
-    <main className="app-shell">
-      <nav className="top-nav" aria-label="Primary navigation">
-        <a className="brand" href="#top" onClick={startOver}>image<span>trace</span></a>
-        <div className="nav-steps" aria-label="Search progress">
-          <span className={!results ? 'active' : ''}>01 / Search</span>
-          <span className={results ? 'active' : ''}>02 / Results</span>
-        </div>
-      </nav>
-      {!results ? (
-        <section className="search-screen" id="top">
-          <header className="hero">
-            <p className="eyebrow">REVERSE IMAGE SEARCH</p>
-            <h1>Find where your<br />image appears.</h1>
-            <p>Paste a public image URL to discover matching pages and social posts across the web.</p>
-          </header>
-          <form className="search-form" onSubmit={search}>
-            <label htmlFor="image-url">Image URL</label>
-            <div className="url-row">
-              <input id="image-url" type="url" value={imageUrl} onChange={updateUrl}
-                placeholder="https://example.com/image.jpg" autoComplete="url" />
-              <button type="submit" disabled={loading || !hasValidInput} aria-label="Search image URL">
-                {loading ? 'Searching…' : <><span>Search</span><ArrowIcon /></>}
-              </button>
-            </div>
-          </form>
-          {error && <p className="error">{error}</p>}
-        </section>
-      ) : (
-        <section className="results-screen" id="top" aria-labelledby="step-two">
-          <header className="results-intro">
-            <div>
-              <p className="eyebrow">SEARCH RESULTS</p>
-              <h1 id="step-two">Matches for your image.</h1>
-            </div>
-            <button className="new-search" onClick={startOver}>New search</button>
-          </header>
-          <div className="query-image">
-            <img src={previewUrl} alt="Searched image" />
-            <p>Source image</p>
-          </div>
-          <section className="results-section">
-            <div className="results-head">
-              <h2>Found pages</h2>
-              <p>{allResults.length} result{allResults.length === 1 ? '' : 's'}</p>
-            </div>
-            {allResults.length ? (
-              <div className="result-grid">
-                {allResults.map((result, index) => <SearchResult key={`${result.url}-${index}`} result={result} />)}
-              </div>
-            ) : <p className="empty">No matching pages were found for this image.</p>}
-          </section>
-        </section>
-      )}
-    </main>
-  )
+  const [page, setPage] = useState('home'); const [imageUrl, setImageUrl] = useState(''); const [loading, setLoading] = useState(false); const [error, setError] = useState(null); const [results, setResults] = useState(null); const [selected, setSelected] = useState(null)
+  const rawUrl = imageUrl.trim(); const previewUrl = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`
+  const allResults = useMemo(() => { if (!results) return []; const seen = new Set(); return [results.yandex?.info_pages, results.yandex?.similar_images, results.google?.matching_pages, results.google?.similar_images].flat().filter((item) => item?.url && !seen.has(item.url) && seen.add(item.url)) }, [results])
+  function go(next) { if (next === 'results' && !results) return setPage('search'); if (next === 'verify' && !selected) return setPage(results ? 'results' : 'search'); setPage(next) }
+  function update(event) { setImageUrl(event.target.value); setResults(null); setSelected(null); setError(null) }
+  async function search(event) { event.preventDefault(); if (!rawUrl) return; setLoading(true); setError(null); try { const response = await fetch(`${API}/api/search`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image_url: previewUrl, engine: 'both', amount: 30 }) }); if (!response.ok) throw new Error(`Backend ${response.status}`); setResults(await response.json()); setPage('results') } catch (err) { setError(`Search failed: ${err.message}. Is the backend running on ${API}?`) } finally { setLoading(false) } }
+  function review(result) { setSelected(result); setPage('verify') }
+  return <main className="app-shell"><nav className="top-nav"><button className="brand" onClick={() => go('home')}>image<span>trace</span></button><div className="nav-steps">{[['search', '01', 'Search'], ['results', '02', 'Results'], ['verify', '03', 'Verify']].map(([key, number, label]) => <button key={key} className={page === key ? 'active' : ''} onClick={() => go(key)}>{number} <span>{label}</span></button>)}</div></nav>
+    {page === 'home' && <section className="home-screen"><div className="home-copy"><p className="eyebrow">IMAGE INTELLIGENCE</p><h1>Find where<br />images travel.</h1><p className="lede">A focused reverse image search for discovering matching pages, social posts, and sources across the web.</p><button className="primary-action" onClick={() => go('search')}>Start a search <Arrow /></button></div><HeroArt /><section className="feature-strip"><p>HOW IT WORKS</p><div>{[['01', 'Paste a URL', 'Start with any public image.'], ['02', 'Explore matches', 'See where it appears.'], ['03', 'Review a source', 'Open the result you need.']].map(([n, title, text]) => <article key={n}><b>{n}</b><h2>{title}</h2><span>{text}</span></article>)}</div></section></section>}
+    {page === 'search' && <section className="search-screen"><header><p className="eyebrow">01 / SEARCH</p><h1>Search by image.</h1><p>Paste a public image URL and we’ll look for matches across the web.</p></header><form className="search-stack" onSubmit={search}><div className="url-row"><input aria-label="Image URL" type="text" inputMode="url" value={imageUrl} onChange={update} placeholder="Paste image URL" autoComplete="url" /><button disabled={loading || !rawUrl}>{loading ? 'Searching…' : <>Search <Arrow /></>}</button></div>{rawUrl && <div className="preview-wrap"><p>Image preview</p><img src={previewUrl} alt="Image to search" /></div>}</form>{error && <p className="error">{error}</p>}</section>}
+    {page === 'results' && <section className="results-screen"><header className="page-heading"><div><p className="eyebrow">02 / RESULTS</p><h1>Matches found.</h1></div><button className="text-action" onClick={() => go('search')}>New search <Arrow /></button></header><div className="source-row"><img src={previewUrl} alt="Searched image" /><div><p>YOUR IMAGE</p><span>{allResults.length} matching page{allResults.length === 1 ? '' : 's'} found</span></div></div><section className="result-grid">{allResults.length ? allResults.map((item, index) => <Result key={`${item.url}-${index}`} result={item} onReview={review} />) : <p className="empty">No matching pages were found for this image.</p>}</section></section>}
+    {page === 'verify' && <section className="verify-screen"><p className="eyebrow">03 / VERIFY</p><h1>Review the match.</h1><p className="lede">Confirm the result and open the original page to review its context.</p>{selected && <article className="verify-card"><img src={previewUrl} alt="Searched image" /><div><p className="match-label">MATCHING SOURCE</p><h2>{selected.title || platform(selected.url) || domain(selected.url)}</h2><span>{domain(selected.url)}</span><a href={selected.url} target="_blank" rel="noreferrer">Open source <Arrow /></a></div></article>}<button className="back-button" onClick={() => go('results')}>← Back to results</button></section>}
+  </main>
 }
