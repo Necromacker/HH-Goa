@@ -49,6 +49,9 @@ pnpm-debug.log*
 .env.*
 !.env.example
 
+# Generated local Hardhat deployment; recreated with npm run deploy.
+blockchain/deployment.json
+
 # Editors / IDEs
 .vscode/*
 !.vscode/extensions.json
