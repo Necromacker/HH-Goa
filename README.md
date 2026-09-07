@@ -1,8 +1,6 @@
-# Face Trace: Face Identification & Blockchain Verification
+# Face Identification & Blockchain Verification
 
 Face Trace is an HH Goa 2026 Task 3 project that detects a face in a public image, finds related social-media results, and creates a tamper-evident on-chain evidence record.
-
-Only the SHA-256 evidence fingerprint and the source URL are stored on-chain. Face embeddings, images, and the full post content never leave the application for the blockchain.
 
 ## Demo
 
