@@ -1,21 +1,44 @@
 # Face Trace: Face Identification & Blockchain Verification
 
-Face Trace is an HH Goa 2026 Task 3 pipeline:
+Face Trace is an HH Goa 2026 Task 3 project that detects a face in a public image, finds related social-media results, and creates a tamper-evident on-chain evidence record.
 
-1. Detect and encode the largest face in a public image URL.
-2. Search Google Lens and Yandex, filter returned social-media URLs, and rank them with the face fingerprint.
-3. Select a discovered post and record a SHA-256 fingerprint of its evidence on a local Ethereum blockchain.
-4. Recreate the fingerprint and check it against the on-chain record.
+Only the SHA-256 evidence fingerprint and the source URL are stored on-chain. Face embeddings, images, and the full post content never leave the application for the blockchain.
 
-Only the fingerprint and source URL are stored on-chain. No face embedding, image, full post, or biometric record is stored there.
+## Demo
 
-## Stack
+### 1. Dashboard
 
-- FastAPI, OpenCV, Selenium, Google Lens, Yandex, Python `web3`
-- React / Vite
-- Hardhat local Ethereum network and `EvidenceRegistry.sol`
+The landing dashboard introduces the three-step workflow: search, choose a result, and verify the evidence.
 
-## Run
+![Face Trace dashboard](Demo/1.png)
+
+### 2. Search
+
+Paste a public image URL. Face Trace detects and encodes the largest face before running Google Lens and Yandex reverse-image searches.
+
+![Face search](Demo/2.png)
+
+### 3. Results
+
+The application filters search results for social platforms and ranks the matching posts. Select one result to use as evidence.
+
+![Social-media results](Demo/3.png)
+
+### 4. Verify
+
+Click **Record on blockchain** to create an on-chain evidence record. Click **Verify record** to recompute the fingerprint and compare it with the on-chain record.
+
+![Evidence verification](Demo/4.png)
+
+### 5. Post found — Elon Musk on Instagram
+
+This example shows a social-media post found for the Elon Musk search image.
+
+![Instagram post found for Elon Musk](Demo/5.png)
+
+A successful verification means the selected evidence has exactly the same face fingerprint, URL, thumbnail URL, and title as the record. Selecting another result changes the SHA-256 fingerprint and produces **Not verified**.
+
+## How to run
 
 Install dependencies:
 
@@ -25,78 +48,65 @@ cd frontend && npm install
 cd ../blockchain && npm install
 ```
 
-Start local Ethereum in terminal one:
+Start the local Hardhat Ethereum network in terminal one:
 
 ```bash
 cd blockchain
 npm run node
 ```
 
-Copy a private key printed by Hardhat (it is safe only for this disposable local network). In terminal two:
+In terminal two, create the local configuration and deploy the contract:
 
 ```bash
 cd blockchain
 cp .env.example .env
-# Add EVIDENCE_SIGNER_PRIVATE_KEY=<your local Hardhat private key> to .env
-set -a && source .env && set +a
+# Add EVIDENCE_SIGNER_PRIVATE_KEY=<a local Hardhat private key printed by npm run node>
 npm run deploy
 ```
 
-Deployment writes `blockchain/deployment.json`, which the API reads automatically. Start the API in terminal three:
+Deployment generates `blockchain/deployment.json`, which is read automatically by the API.
+
+In terminal three, start the backend:
 
 ```bash
 python3 backend/server.py
 ```
 
-The backend automatically reads `blockchain/.env`; environment variables set
-by your shell still take precedence.
-
-Start the UI in terminal four:
+In terminal four, start the frontend:
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-## Project layout
+Open the Vite URL printed in the terminal, normally `http://localhost:5173`.
 
-```
+If ChromeDriver is installed somewhere other than `chromedriver-mac-arm64/chromedriver`, set `CHROMEDRIVER_PATH` to its executable path.
+
+## Tech stack
+
+- **Frontend:** React, Vite
+- **Backend:** Python, FastAPI, OpenCV, Selenium, Beautiful Soup, Requests, Web3.py
+- **Search:** Google Lens and Yandex reverse-image search
+- **Blockchain:** Solidity, Hardhat local Ethereum network, `EvidenceRegistry.sol`
+- **Evidence format:** SHA-256 over stable JSON containing the face fingerprint, source URL, thumbnail URL, and title
+
+### Project layout
+
+```text
 HH-Goa/
 ├── frontend/     # React / Vite user interface
 ├── backend/      # FastAPI app and Python face-search pipeline
 ├── blockchain/   # Hardhat contract and deployment scripts
+├── Demo/         # README walkthrough screenshots
 ├── data/         # generated local images, face crops, and search results
 └── README.md
 ```
 
-Set `CHROMEDRIVER_PATH` if ChromeDriver is installed somewhere other than
-`chromedriver-mac-arm64/chromedriver`.
-
-## Demo flow
-
-1. In **01 Search**, paste a public image URL containing a face.
-2. The app detects/encodes the face and runs live reverse-image search.
-3. In **02 Results**, choose a real social-media result returned by that search.
-4. In **03 Verify**, click **Record on blockchain**.
-5. Click **Verify record** to compare a newly calculated evidence hash with the on-chain record.
-
-The SHA-256 evidence payload uses stable, sorted JSON:
-
-```json
-{
-  "face_fingerprint": "face image hash only",
-  "source_url": "selected result URL",
-  "thumbnail_url": "selected result thumbnail URL",
-  "title": "selected result title"
-}
-```
-
-Changing any included value changes the hash and causes verification to fail.
-
-## Limitations and responsible use
+### Known limitations and responsible use
 
 - Use only public images and material you are authorized to process. Do not use this for surveillance or non-consensual identification.
-- Search engines can rate-limit/block automated requests or return no social result.
-- A public image URL is needed for live reverse search. Local uploads can be face-scanned but cannot be sent to Lens/Yandex as a public URL.
+- Search engines can rate-limit or block automated requests, or return no social-media result.
+- A public image URL is required for live reverse-image search. Local uploads can be face-scanned but cannot be sent to Lens or Yandex.
 - The OpenCV encoding is a demo-ranking signal, not production biometric recognition.
-- Hardhat is a local simulated Ethereum network; restarting it clears records.
+- Hardhat is a local simulated Ethereum network. Restarting it clears all evidence records, so the contract must be deployed again.
