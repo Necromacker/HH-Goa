@@ -1,8 +1,7 @@
-"""FastAPI backend wrapping the reverse-image scrapers.
+"""FastAPI backend wrapping the face-search and evidence services.
 
-Run:
-    /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 server.py
-    # or: uvicorn server:app --port 8011
+Run from the repository root with ``python3 backend/server.py`` or
+``uvicorn backend.server:app --port 8011``.
 """
 import shutil
 import sys
@@ -16,13 +15,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from bs4 import BeautifulSoup
 
-# repo-root imports (face_detection.py, social_search.py live in repo root)
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+# Keep the pipeline modules importable both when this file is executed directly
+# and when the app is started with ``uvicorn backend.server:app``.
+BACKEND_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BACKEND_DIR.parent
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
 
 from face_detection import process_face_scan
 from social_search import CATEGORY_ORDER, process_matches
+from blockchain_service import register as register_evidence, verify as verify_evidence
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -39,6 +41,11 @@ class FaceSearchRequest(BaseModel):
     image_url: str
     engine: str = "both"  # google | yandex | both
     amount: int = 20
+
+
+class EvidenceRequest(BaseModel):
+    post: dict
+    face_fingerprint: str = ""
 
 
 def _crop_dataurl(crop_path: str | None) -> str | None:
@@ -85,8 +92,11 @@ def _run_face_pipeline(source: str, engine: str, amount: int) -> dict:
 
 
 def make_driver():
-    from pathlib import Path as _P
-    driver_path = str(_P(__file__).resolve().parents[2] / "chromedriver")
+    from selenium.webdriver.chrome.service import Service
+
+    driver_path = Path(os.environ.get(
+        "CHROMEDRIVER_PATH", REPO_ROOT / "chromedriver-mac-arm64" / "chromedriver"
+    ))
     options = Options()
     options.add_argument("--incognito")
     options.add_argument("--headless=new")
@@ -99,7 +109,19 @@ def make_driver():
     options.add_argument(
         "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36")
-    driver = webdriver.Chrome(driver_path, options=options)
+    # Selenium 4 uses a ``Service`` object, whereas Selenium 3.141 (still
+    # commonly bundled with older Python environments) rejects ``service``.
+    # Keep both invocation forms working while the project transitions.
+    try:
+        service = Service(executable_path=str(driver_path)) if driver_path.exists() else Service()
+        driver = webdriver.Chrome(service=service, options=options)
+    except TypeError as exc:
+        if "service" not in str(exc):
+            raise
+        legacy_kwargs = {"options": options}
+        if driver_path.exists():
+            legacy_kwargs["executable_path"] = str(driver_path)
+        driver = webdriver.Chrome(**legacy_kwargs)
     try:
         driver.execute_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
@@ -403,7 +425,28 @@ async def face_upload_search(file: UploadFile = File(...),
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.post("/api/evidence/register")
+def evidence_register(req: EvidenceRequest):
+    """Hash selected live-search evidence and store only its hash on local chain."""
+    try:
+        if not req.post.get("url"):
+            raise ValueError("A selected post URL is required")
+        return register_evidence(req.post, req.face_fingerprint)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/evidence/verify")
+def evidence_verify(req: EvidenceRequest):
+    """Re-hash evidence and compare it with the on-chain fingerprint."""
+    try:
+        if not req.post.get("url"):
+            raise ValueError("A selected post URL is required")
+        return verify_evidence(req.post, req.face_fingerprint)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
-    # run from repo root so ./chromedriver resolves
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("PORT", "8011")))

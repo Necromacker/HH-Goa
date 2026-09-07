@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+selenium
+beautifulsoup4
+requests
+opencv-python
+numpy
+Pillow
+pandas
+python-multipart
+web3

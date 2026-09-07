@@ -1,6 +1,6 @@
 """Step 2: Social-media search — filter + face re-rank on top of reverse-image results.
 
-Works with the existing scrapers in dashboard/backend/server.py:
+Works with the FastAPI scraper endpoints in ``backend/server.py``:
   search_yandex(image_url) -> {info_pages:[...], similar_images:[...]}
   search_google(image_url) -> {matching_pages:[...], similar_images:[...]}
 
@@ -20,7 +20,7 @@ import requests
 
 try:
     from face_detection import compare_faces, encode_face
-except ImportError:  # when imported as dashboard module
+except ImportError:  # when imported outside the backend directory
     from pathlib import Path as _P
     import sys as _sys
     _sys.path.insert(0, str(_P(__file__).resolve().parent))
